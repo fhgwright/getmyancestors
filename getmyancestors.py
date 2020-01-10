@@ -284,17 +284,22 @@ class Note:
             Note.counter += 1
             self.num = Note.counter
         self.text = text.strip()
+        self.linked = False
 
         if tree:
             tree.notes.append(self)
 
-    def print(self, file=sys.stdout):
+    def print(self, file=sys.stdout, filter=False):
         """ print Note in GEDCOM format """
+        # if filtering, print only if referenced
+        if filter and not self.linked:
+            return
         file.write(cont("0 @N%s@ NOTE %s" % (self.num, self.text)))
 
     def link(self, file=sys.stdout, level=1):
         """ print the reference in GEDCOM format """
         file.write("%s NOTE @N%s@\n" % (level, self.num))
+        self.linked = True
 
 
 class Source:
@@ -316,6 +321,7 @@ class Source:
         self.tree = tree
         self.url = self.citation = self.title = self.fid = None
         self.notes = set()
+        self.linked = False
         if data:
             self.fid = data["id"]
             if "about" in data:
@@ -332,8 +338,11 @@ class Source:
                     if n["text"]:
                         self.notes.add(Note(n["text"], self.tree))
 
-    def print(self, file=sys.stdout):
+    def print(self, file=sys.stdout, filter=False):
         """ print Source in GEDCOM format """
+        # if filtering, print only if referenced
+        if filter and not self.linked:
+            return
         file.write("0 @S%s@ SOUR \n" % self.num)
         if self.title:
             file.write(cont("1 TITL " + self.title))
@@ -348,6 +357,7 @@ class Source:
     def link(self, file=sys.stdout, level=1):
         """ print the reference in GEDCOM format """
         file.write("%s SOUR @S%s@\n" % (level, self.num))
+        self.linked = True
 
 
 class Fact:
@@ -524,6 +534,7 @@ class Indi:
         self.name = None
         self.gender = None
         self.living = None
+        self.near_living = None
         self.parents = set()
         self.spouses = set()
         self.children = set()
@@ -542,6 +553,7 @@ class Indi:
         """ add FS individual data """
         if data:
             self.living = data["living"]
+            self.near_living = False
             for x in data["names"]:
                 if x["preferred"]:
                     self.name = Name(x, self.tree)
@@ -667,9 +679,43 @@ class Indi:
                     return
             self.notes.add(Note(text, self.tree))
 
-    def print(self, file=sys.stdout):
-        """ print individual in GEDCOM format """
+    def get_immediates(self):
+        """ get IDs of immediate relatives """
+        fathers = set([x[0] for x in self.parents])
+        mothers = set([x[1] for x in self.parents])
+        parents = fathers | mothers
+        husbands = set([x[0] for x in self.spouses])
+        wives = set([x[1] for x in self.spouses])
+        spouses = (husbands | wives) - set([self.fid])
+        children = set([x[2] for x in self.children])
+        return parents | spouses | children
+
+    def set_near_living(self):
+        """ set near_living for immediate relatives """
+        indi = self.tree.indi
+        for rel_fid in self.get_immediates():
+            rel = indi.get(rel_fid)
+            if rel:
+                rel.near_living = True
+
+    def print_indi(self, file=sys.stdout):
+        """ print INDI in GEDCOM format """
         file.write("0 @I%s@ INDI\n" % self.num)
+
+    def print_fid(self, file=sys.stdout):
+        """ print FS ID in GEDCOM format """
+        file.write("1 _FSFTID %s\n" % self.fid)
+
+    def print(self, file=sys.stdout, filter=False):
+        """ print individual in GEDCOM format """
+        # If filtering, show only IDs of deceased immediate relatives of
+        # living persons, and nothing for other deceased persons.
+        if filter and not self.living:
+            if self.near_living:
+                self.print_indi(file)
+                self.print_fid(file)
+            return
+        self.print_indi(file)
         if self.name:
             self.name.print(file)
         for o in self.nicknames:
@@ -705,7 +751,7 @@ class Indi:
             file.write("1 FAMS @F%s@\n" % num)
         for num in self.famc_num:
             file.write("1 FAMC @F%s@\n" % num)
-        file.write("1 _FSFTID %s\n" % self.fid)
+        self.print_fid(file)
         for o in self.notes:
             o.link(file)
         for source, quote in self.sources:
@@ -808,9 +854,38 @@ class Fam:
                         return
                 self.notes.add(Note(text, self.tree))
 
-    def print(self, file=sys.stdout):
-        """ print family information in GEDCOM format """
+    def get_members(self):
+        """ get set of all family members """
+        spouses = set([x for x in [self.husb_fid, self.wife_fid] if x])
+        return spouses | self.chil_fid
+
+    def get_counts(self):
+        """ get counts of living and total members """
+        members = self.get_members()
+        living = self.tree.get_living(members)
+        return len(living), len(members)
+
+    def print_fam(self, file=sys.stdout):
+        """ print FAM in GEDCOM format """
         file.write("0 @F%s@ FAM\n" % self.num)
+
+    def print_fid(self, file=sys.stdout):
+        """ print FS ID in GEDCOM format """
+        file.write("1 _FSFTID %s\n" % self.fid)
+
+    def print(self, file=sys.stdout, filter=False):
+        """ print family information in GEDCOM format """
+        if filter:
+            living, total = self.get_counts()
+            # If filtering, suppress completely deceased families
+            if not living:
+                return
+            # If filtering, show just IDs of partially living families
+            if living < total:
+                self.print_fam(file)
+                self.print_fid(file)
+                return
+        self.print_fam(file)
         if self.husb_num:
             file.write("1 HUSB @I%s@\n" % self.husb_num)
         if self.wife_num:
@@ -823,7 +898,7 @@ class Fam:
             file.write("1 SLGS\n")
             self.sealing_spouse.print(file)
         if self.fid:
-            file.write("1 _FSFTID %s\n" % self.fid)
+            self.print_fid(file)
         for o in self.notes:
             o.link(file)
         for source, quote in self.sources:
@@ -1029,7 +1104,30 @@ class Tree:
                 self.fam[(husb, wife)].num for husb, wife in self.indi[fid].fams_fid
             )
 
-    def print(self, file=sys.stdout):
+    def get_living(self, fids):
+        """ get living subset of set of fids """
+        result = []
+        lookup = self.indi.get
+        for fid in fids:
+            member = lookup(fid)
+            if member and member.living:
+                result.append(fid)
+        return set(result)
+
+    def set_near_living(self):
+        """ set up near_living for all persons in tree """
+        for indi in self.indi.values():
+            if indi.living:
+                indi.set_near_living()
+
+    def clear_linked(self):
+        """ clear linked flags for sources and notes """
+        for s in self.sources.values():
+            s.linked = False
+        for n in self.notes:
+            n.linked = False
+
+    def print(self, file=sys.stdout, filter=False):
         """ print family tree in GEDCOM format """
         file.write("0 HEAD\n")
         file.write("1 CHAR UTF-8\n")
@@ -1047,18 +1145,18 @@ class Tree:
         file.write("1 LANG %s\n" % self.lang)
 
         for fid in sorted(self.indi, key=lambda x: self.indi.__getitem__(x).num):
-            self.indi[fid].print(file)
+            self.indi[fid].print(file, filter=filter)
         for husb, wife in sorted(self.fam, key=lambda x: self.fam.__getitem__(x).num):
-            self.fam[(husb, wife)].print(file)
+            self.fam[(husb, wife)].print(file, filter=filter)
         sources = sorted(self.sources.values(), key=lambda x: x.num)
         for s in sources:
-            s.print(file)
+            s.print(file, filter=filter)
         notes = sorted(self.notes, key=lambda x: x.num)
         for i, n in enumerate(notes):
             if i > 0:
                 if n.num == notes[i - 1].num:
                     continue
-            n.print(file)
+            n.print(file, filter=filter)
         file.write("0 TRLR\n")
 
 
@@ -1114,6 +1212,13 @@ def main():
         action="store_true",
         default=False,
         help="Add LDS ordinances (need LDS account) [False]",
+    )
+    parser.add_argument(
+        "-L",
+        "--living-only",
+        action="store_true",
+        default=False,
+        help="Limit output to living persons [False]",
     )
     parser.add_argument(
         "-v",
@@ -1273,9 +1378,13 @@ def main():
         loop.run_until_complete(download_stuff(loop))
 
     finally:
+        # if filtering, set up near_living for all persons
+        if args.living_only:
+            tree.set_near_living()
+
         # compute number for family relationships and print GEDCOM file
         tree.reset_num()
-        tree.print(args.outfile)
+        tree.print(args.outfile, filter=args.living_only)
         print(
             _(
                 "Downloaded %s individuals, %s families, %s sources and %s notes "
