@@ -32,6 +32,7 @@ import asyncio
 import argparse
 import requests
 import babelfish
+from collections import OrderedDict
 
 # local import
 from translation import translations
@@ -576,7 +577,7 @@ class Indi:
             if "sources" in data:
                 sources = self.tree.fs.get_url("/platform/tree/persons/%s/sources" % self.fid)
                 if sources:
-                    quotes = dict()
+                    quotes = OrderedDict()
                     for quote in sources["persons"][0]["sources"]:
                         quotes[quote["descriptionId"]] = (
                             quote["attribution"]["changeMessage"]
@@ -759,7 +760,7 @@ class Fam:
                     for x in data["relationships"][0]["facts"]:
                         self.facts.add(Fact(x, self.tree))
                 if "sources" in data["relationships"][0]:
-                    quotes = dict()
+                    quotes = OrderedDict()
                     for x in data["relationships"][0]["sources"]:
                         quotes[x["descriptionId"]] = (
                             x["attribution"]["changeMessage"]
@@ -839,11 +840,11 @@ class Tree:
 
     def __init__(self, fs=None):
         self.fs = fs
-        self.indi = dict()
-        self.fam = dict()
+        self.indi = OrderedDict()
+        self.fam = OrderedDict()
         self.notes = list()
-        self.sources = dict()
-        self.places = dict()
+        self.sources = OrderedDict()
+        self.places = OrderedDict()
         self.display_name = self.lang = None
         if fs:
             self.display_name = fs.display_name
