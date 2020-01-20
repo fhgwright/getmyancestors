@@ -35,6 +35,7 @@ import babelfish
 from collections import OrderedDict
 
 # local import
+from orderedset import OrderedSet
 from translation import translations
 
 
@@ -316,7 +317,7 @@ class Source:
 
         self.tree = tree
         self.url = self.citation = self.title = self.fid = None
-        self.notes = set()
+        self.notes = OrderedSet()
         if data:
             self.fid = data["id"]
             if "about" in data:
@@ -518,26 +519,26 @@ class Indi:
             self.num = Indi.counter
         self.fid = fid
         self.tree = tree
-        self.famc_fid = set()
-        self.fams_fid = set()
-        self.famc_num = set()
-        self.fams_num = set()
+        self.famc_fid = OrderedSet()
+        self.fams_fid = OrderedSet()
+        self.famc_num = OrderedSet()
+        self.fams_num = OrderedSet()
         self.name = None
         self.gender = None
         self.living = None
-        self.parents = set()
-        self.spouses = set()
-        self.children = set()
+        self.parents = OrderedSet()
+        self.spouses = OrderedSet()
+        self.children = OrderedSet()
         self.baptism = self.confirmation = self.initiatory = None
         self.endowment = self.sealing_child = None
-        self.nicknames = set()
-        self.facts = set()
-        self.birthnames = set()
-        self.married = set()
-        self.aka = set()
-        self.notes = set()
-        self.sources = set()
-        self.memories = set()
+        self.nicknames = OrderedSet()
+        self.facts = OrderedSet()
+        self.birthnames = OrderedSet()
+        self.married = OrderedSet()
+        self.aka = OrderedSet()
+        self.notes = OrderedSet()
+        self.sources = OrderedSet()
+        self.memories = OrderedSet()
 
     def add_data(self, data):
         """ add FS individual data """
@@ -653,7 +654,7 @@ class Indi:
 
     def get_contributors(self):
         """ retrieve contributors """
-        temp = set()
+        temp = OrderedSet()
         url = "/platform/tree/persons/%s/changes" % self.fid
         data = self.tree.fs.get_url(url, {"Accept": "application/x-gedcomx-atom+json"})
         if data:
@@ -735,12 +736,12 @@ class Fam:
         self.wife_fid = wife if wife else None
         self.tree = tree
         self.husb_num = self.wife_num = self.fid = None
-        self.facts = set()
+        self.facts = OrderedSet()
         self.sealing_spouse = None
-        self.chil_fid = set()
-        self.chil_num = set()
-        self.notes = set()
-        self.sources = set()
+        self.chil_fid = OrderedSet()
+        self.chil_num = OrderedSet()
+        self.notes = OrderedSet()
+        self.sources = OrderedSet()
 
     def add_child(self, child):
         """ add a child fid to the family """
@@ -794,7 +795,7 @@ class Fam:
     def get_contributors(self):
         """ retrieve contributors """
         if self.fid:
-            temp = set()
+            temp = OrderedSet()
             url = "/platform/tree/couple-relationships/%s/changes" % self.fid
             data = self.tree.fs.get_url(url, {"Accept": "application/x-gedcomx-atom+json"})
             if data:
@@ -856,7 +857,7 @@ class Tree:
         """
 
         async def add_datas(loop, data):
-            futures = set()
+            futures = OrderedSet()
             for person in data["persons"]:
                 self.indi[person["id"]] = Indi(person["id"], self)
                 futures.add(loop.run_in_executor(None, self.indi[person["id"]].add_data, person))
@@ -929,10 +930,10 @@ class Tree:
         """ add parents relationships
            :param fids: a set of fids
         """
-        parents = set()
+        parents = OrderedSet()
         for fid in fids & self.indi.keys():
             for couple in self.indi[fid].parents:
-                parents |= set(couple)
+                parents |= OrderedSet(couple)
         if parents:
             self.add_indis(parents)
         for fid in fids & self.indi.keys():
@@ -946,7 +947,7 @@ class Tree:
                     and father in self.indi
                 ):
                     self.add_trio(father, mother, fid)
-        return set(filter(None, parents))
+        return OrderedSet(filter(None, parents))
 
     def add_spouses(self, fids):
         """ add spouse relationships
@@ -954,7 +955,7 @@ class Tree:
         """
 
         async def add(loop, rels):
-            futures = set()
+            futures = OrderedSet()
             for father, mother, relfid in rels:
                 if (father, mother) in self.fam:
                     futures.add(
@@ -963,13 +964,13 @@ class Tree:
             for future in futures:
                 await future
 
-        rels = set()
+        rels = OrderedSet()
         for fid in fids & self.indi.keys():
             rels |= self.indi[fid].spouses
         loop = asyncio.get_event_loop()
         if rels:
-            self.add_indis(set.union(*({father, mother} for father, mother, relfid in rels)))
             for father, mother, _ in rels:
+                self.add_indis([father, mother])
                 if father in self.indi and mother in self.indi:
                     self.indi[father].add_fams((father, mother))
                     self.indi[mother].add_fams((father, mother))
@@ -980,12 +981,12 @@ class Tree:
         """ add children relationships
             :param fids: a set of fid
         """
-        rels = set()
+        rels = OrderedSet()
         for fid in fids & self.indi.keys():
-            rels |= self.indi[fid].children if fid in self.indi else set()
-        children = set()
+            rels |= self.indi[fid].children if fid in self.indi else OrderedSet()
+        children = OrderedSet()
         if rels:
-            self.add_indis(set.union(*(set(rel) for rel in rels)))
+            self.add_indis(rels)
             for father, mother, child in rels:
                 if child in self.indi and (
                     mother in self.indi
@@ -1019,14 +1020,14 @@ class Tree:
         for husb, wife in self.fam:
             self.fam[(husb, wife)].husb_num = self.indi[husb].num if husb else None
             self.fam[(husb, wife)].wife_num = self.indi[wife].num if wife else None
-            self.fam[(husb, wife)].chil_num = set(
+            self.fam[(husb, wife)].chil_num = OrderedSet(
                 self.indi[chil].num for chil in self.fam[(husb, wife)].chil_fid
             )
         for fid in self.indi:
-            self.indi[fid].famc_num = set(
+            self.indi[fid].famc_num = OrderedSet(
                 self.fam[(husb, wife)].num for husb, wife in self.indi[fid].famc_fid
             )
-            self.indi[fid].fams_num = set(
+            self.indi[fid].fams_num = OrderedSet(
                 self.fam[(husb, wife)].num for husb, wife in self.indi[fid].fams_fid
             )
 
@@ -1215,8 +1216,8 @@ def main():
         tree.add_indis(todo)
 
         # download ancestors
-        todo = set(tree.indi.keys())
-        done = set()
+        todo = OrderedSet(tree.indi.keys())
+        done = OrderedSet()
         for i in range(args.ascend):
             if not todo:
                 break
@@ -1226,8 +1227,8 @@ def main():
             todo = tree.add_parents(todo) - done
 
         # download descendants
-        todo = set(tree.indi.keys())
-        done = set()
+        todo = OrderedSet(tree.indi.keys())
+        done = OrderedSet()
         for i in range(args.descend):
             if not todo:
                 break
@@ -1240,12 +1241,12 @@ def main():
         if args.marriage:
             print(_("Downloading spouses and marriage information..."),
                   file=sys.stderr)
-            todo = set(tree.indi.keys())
+            todo = OrderedSet(tree.indi.keys())
             tree.add_spouses(todo)
 
         # download ordinances, notes and contributors
         async def download_stuff(loop):
-            futures = set()
+            futures = OrderedSet()
             for fid, indi in tree.indi.items():
                 futures.add(loop.run_in_executor(None, indi.get_notes))
                 if args.get_ordinances:
